@@ -19,6 +19,23 @@ export type ScreenType =
   | 'mission-complete'
   | 'session-end';
 
+export type MissionPhase =
+  | 'intro'
+  | 'instruction'
+  | 'physical-action'
+  | 'completion'
+  | 'finished';
+
+export type SoundPlayMode =
+  | 'all'             // Suara Lengkap (Kendaraan + Narator + Musik Lembut)
+  | 'vehicle-sfx'     // Hanya Suara Kendaraan
+  | 'cheerful-music'  // Musik Ceria Instrumental
+  | 'calm-sound'      // Suara Tenang (Alam & Nada Lembut)
+  | 'silent';         // Mode Senyap
+
+export type VisualMode = '3d' | '2d';
+export type GraphicsQuality = 'high' | 'low';
+
 export interface TargetWord {
   word: string;
   syllables?: string; // e.g. "ba-tu"
@@ -46,7 +63,11 @@ export interface Mission {
 }
 
 export interface AudioSettings {
-  volume: number; // 0 to 1
+  volume: number; // Master volume 0 to 1
+  sfxVolume: number; // Suara kendaraan 0 to 1
+  narratorVolume: number; // Suara narator 0 to 1
+  ambientVolume: number; // Musik & suasana 0 to 1
+  soundMode: SoundPlayMode;
   isMuted: boolean;
   speechRate: number; // 0.7 to 1.1
   soundEffects: boolean;
@@ -58,4 +79,6 @@ export interface ParentSettings {
   highContrast: boolean;
   sessionLimitMinutes: number; // default 5 minutes
   autoCalmAfterInstruction: boolean; // quiet the screen after 15s
+  visualMode: VisualMode;
+  graphicsQuality: GraphicsQuality;
 }

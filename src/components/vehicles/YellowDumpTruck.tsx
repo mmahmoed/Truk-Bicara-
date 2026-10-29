@@ -1,10 +1,11 @@
 import React from 'react';
 
 interface Props {
-  actionState?: 'idle' | 'driving' | 'dumping' | 'celebrate';
+  actionState?: 'idle' | 'driving' | 'dumping' | 'celebrate' | 'bed-open' | 'stop' | 'digging' | 'spinning';
   isAnimated?: boolean;
   className?: string;
   showRocks?: boolean;
+  onClick?: () => void;
 }
 
 export const YellowDumpTruck: React.FC<Props> = ({
@@ -12,12 +13,17 @@ export const YellowDumpTruck: React.FC<Props> = ({
   isAnimated = false,
   className = 'w-full h-auto max-w-lg',
   showRocks = true,
+  onClick,
 }) => {
-  const isDumping = actionState === 'dumping';
+  const isDumping = actionState === 'dumping' || actionState === 'celebrate' || actionState === 'bed-open';
   const isDriving = actionState === 'driving' || isAnimated;
 
   return (
-    <div className={`relative flex items-center justify-center ${className}`}>
+    <div
+      onClick={onClick}
+      className={`relative flex items-center justify-center cursor-pointer transition-transform active:scale-98 ${className}`}
+      title="Klik untuk membuka / menutup bak truk!"
+    >
       <svg
         viewBox="0 0 540 320"
         fill="none"

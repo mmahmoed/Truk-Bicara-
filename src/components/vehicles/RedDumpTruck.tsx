@@ -1,21 +1,28 @@
 import React from 'react';
 
 interface Props {
-  actionState?: 'idle' | 'driving' | 'stop' | 'celebrate';
+  actionState?: 'idle' | 'driving' | 'stop' | 'celebrate' | 'dumping' | 'bed-open' | 'digging' | 'spinning';
   isAnimated?: boolean;
   className?: string;
+  onClick?: () => void;
 }
 
 export const RedDumpTruck: React.FC<Props> = ({
   actionState = 'idle',
   isAnimated = false,
   className = 'w-full h-auto max-w-lg',
+  onClick,
 }) => {
   const isDriving = actionState === 'driving' || isAnimated;
   const isStopped = actionState === 'stop';
+  const isBedOpen = actionState === 'dumping' || actionState === 'bed-open';
 
   return (
-    <div className={`relative flex items-center justify-center ${className}`}>
+    <div
+      onClick={onClick}
+      className={`relative flex items-center justify-center cursor-pointer transition-transform active:scale-98 ${className}`}
+      title="Klik untuk membuka / menutup bak truk!"
+    >
       <svg
         viewBox="0 0 540 320"
         fill="none"
@@ -58,8 +65,14 @@ export const RedDumpTruck: React.FC<Props> = ({
           </g>
         )}
 
-        {/* Sand Bed and Sand Mound */}
-        <g id="sand-load">
+        {/* Sand Bed and Sand Mound (Hinged at rear) */}
+        <g
+          id="sand-load"
+          className={`transition-transform duration-700 origin-[100px_220px] ${
+            isBedOpen ? '-rotate-35' : 'rotate-0'
+          }`}
+          style={{ transformOrigin: '100px 220px' }}
+        >
           {/* Mound of Golden Sand */}
           <path
             d="M 90 120 Q 140 70 200 75 Q 260 70 300 120 Z"

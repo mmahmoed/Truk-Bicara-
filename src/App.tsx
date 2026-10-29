@@ -4,9 +4,8 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { ScreenType, VehicleId, AudioSettings, ParentSettings } from './types';
+import { ScreenType, VehicleId, AudioSettings, ParentSettings, SoundPlayMode, VisualMode } from './types';
 import { MISSIONS } from './data/missions';
-import { VEHICLES } from './data/vehicles';
 import { soundEngine } from './services/soundEngine';
 import { TvNavBar } from './components/TvNavBar';
 import { CalmScreenOverlay } from './components/CalmScreenOverlay';
@@ -34,10 +33,14 @@ export default function App() {
   const [sessionSeconds, setSessionSeconds] = useState<number>(0);
   const [isSessionActive, setIsSessionActive] = useState<boolean>(true);
 
-  // Settings
+  // 3-Channel Audio & SoundPlayMode Settings
   const [audioSettings, setAudioSettings] = useState<AudioSettings>(() => {
     return {
       volume: 0.85,
+      sfxVolume: 0.9,
+      narratorVolume: 0.95,
+      ambientVolume: 0.5,
+      soundMode: 'all',
       isMuted: false,
       speechRate: 0.82,
       soundEffects: true,
@@ -45,20 +48,21 @@ export default function App() {
   });
 
   const [parentSettings, setParentSettings] = useState<ParentSettings>(() => {
-    // Load from localStorage if present
     if (typeof window !== 'undefined') {
       try {
-        const saved = localStorage.getItem('truk_parent_settings');
+        const saved = localStorage.getItem('truk_parent_settings_v2');
         if (saved) return JSON.parse(saved);
       } catch {
         // use default
       }
     }
     return {
-      tvSafeMargin: false, // Default TV safe margin
+      tvSafeMargin: false,
       highContrast: false,
-      sessionLimitMinutes: 5, // Recommends 5 min per session
+      sessionLimitMinutes: 5,
       autoCalmAfterInstruction: true,
+      visualMode: '3d', // 3D Three.js default
+      graphicsQuality: 'high',
     };
   });
 
@@ -86,7 +90,7 @@ export default function App() {
     setParentSettings((prev) => {
       const updated = { ...prev, ...newSettings };
       try {
-        localStorage.setItem('truk_parent_settings', JSON.stringify(updated));
+        localStorage.setItem('truk_parent_settings_v2', JSON.stringify(updated));
       } catch {}
       return updated;
     });
@@ -95,7 +99,11 @@ export default function App() {
   const handleUpdateAudioSettings = (newSettings: Partial<AudioSettings>) => {
     setAudioSettings((prev) => {
       const updated = { ...prev, ...newSettings };
-      if (updated.volume !== undefined) soundEngine.setVolume(updated.volume);
+      if (updated.volume !== undefined) soundEngine.setMasterVolume(updated.volume);
+      if (updated.sfxVolume !== undefined) soundEngine.setSfxVolume(updated.sfxVolume);
+      if (updated.narratorVolume !== undefined) soundEngine.setNarratorVolume(updated.narratorVolume);
+      if (updated.ambientVolume !== undefined) soundEngine.setAmbientVolume(updated.ambientVolume);
+      if (updated.soundMode !== undefined) soundEngine.setSoundMode(updated.soundMode);
       if (updated.isMuted !== undefined) soundEngine.setMuted(updated.isMuted);
       if (updated.speechRate !== undefined) soundEngine.setSpeechRate(updated.speechRate);
       return updated;
@@ -107,10 +115,18 @@ export default function App() {
     handleUpdateAudioSettings({ isMuted: nextMuted });
   };
 
+  const handleToggleVisualMode = () => {
+    const nextMode: VisualMode = parentSettings.visualMode === '3d' ? '2d' : '3d';
+    handleUpdateParentSettings({ visualMode: nextMode });
+  };
+
+  const handleChangeSoundMode = (mode: SoundPlayMode) => {
+    handleUpdateAudioSettings({ soundMode: mode });
+  };
+
   // Keyboard navigation for TV wireless remote / keyboard
   const handleGlobalKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      // Don't capture inside inputs
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         return;
       }
@@ -174,7 +190,6 @@ export default function App() {
       setCurrentMissionId((prev) => prev + 1);
       setCurrentScreen('mission-intro');
     } else {
-      // Finished all 5 missions!
       setCurrentScreen('session-end');
     }
   };
@@ -211,6 +226,10 @@ export default function App() {
           soundEngine.stopAll();
           setCurrentScreen('home');
         }}
+        visualMode={parentSettings.visualMode}
+        onToggleVisualMode={handleToggleVisualMode}
+        soundMode={audioSettings.soundMode}
+        onChangeSoundMode={handleChangeSoundMode}
       />
 
       {/* Main Safe Area Container for TV 16:9 view */}
@@ -225,6 +244,8 @@ export default function App() {
             onStartMission={() => setCurrentScreen('mission-intro')}
             onSelectVehicle={() => setCurrentScreen('select-vehicle')}
             onOpenParentModal={() => setIsParentModalOpen(true)}
+            visualMode={parentSettings.visualMode}
+            onToggleVisualMode={handleToggleVisualMode}
           />
         )}
 
@@ -235,6 +256,8 @@ export default function App() {
             onSelectVehicle={(id) => setSelectedVehicleId(id)}
             onProceedToMission={() => setCurrentScreen('mission-intro')}
             onBackToHome={() => setCurrentScreen('home')}
+            visualMode={parentSettings.visualMode}
+            onToggleVisualMode={handleToggleVisualMode}
           />
         )}
 
@@ -242,6 +265,8 @@ export default function App() {
         {currentScreen === 'mission-intro' && (
           <MissionIntroScreen
             mission={activeMission}
+            visualMode={parentSettings.visualMode}
+            onToggleVisualMode={handleToggleVisualMode}
             onStartPhysicalMission={() => setCurrentScreen('physical-play')}
             onBackToSelectVehicle={() => setCurrentScreen('select-vehicle')}
           />
@@ -251,6 +276,8 @@ export default function App() {
         {currentScreen === 'physical-play' && (
           <PhysicalPlayScreen
             mission={activeMission}
+            visualMode={parentSettings.visualMode}
+            onToggleVisualMode={handleToggleVisualMode}
             onCompleteMission={() => setCurrentScreen('mission-complete')}
             onActivateCalmMode={() => setIsCalmMode(true)}
           />
@@ -260,6 +287,8 @@ export default function App() {
         {currentScreen === 'mission-complete' && (
           <MissionCompleteScreen
             mission={activeMission}
+            visualMode={parentSettings.visualMode}
+            onToggleVisualMode={handleToggleVisualMode}
             onNextMission={handleNextMission}
             onEndSession={handleEndSession}
           />

@@ -7,10 +7,11 @@ import { CementMixerTruck } from './CementMixerTruck';
 
 interface Props {
   vehicleId: VehicleId;
-  actionState?: 'idle' | 'driving' | 'dumping' | 'digging' | 'spinning' | 'stop' | 'celebrate';
+  actionState?: 'idle' | 'driving' | 'dumping' | 'digging' | 'spinning' | 'stop' | 'celebrate' | 'bed-open';
   isAnimated?: boolean;
   className?: string;
   showRocks?: boolean;
+  onClick?: () => void;
 }
 
 export const VehicleRenderer: React.FC<Props> = ({
@@ -19,14 +20,24 @@ export const VehicleRenderer: React.FC<Props> = ({
   isAnimated = false,
   className = 'w-full max-w-xl h-auto',
   showRocks = true,
+  onClick,
 }) => {
   switch (vehicleId) {
     case 'truk-merah':
       return (
         <RedDumpTruck
-          actionState={actionState === 'stop' ? 'stop' : actionState === 'driving' ? 'driving' : 'idle'}
+          actionState={
+            actionState === 'bed-open' || actionState === 'dumping'
+              ? 'dumping'
+              : actionState === 'stop'
+              ? 'stop'
+              : actionState === 'driving'
+              ? 'driving'
+              : 'idle'
+          }
           isAnimated={isAnimated}
           className={className}
+          onClick={onClick}
         />
       );
     case 'ekskavator':
@@ -49,10 +60,17 @@ export const VehicleRenderer: React.FC<Props> = ({
     default:
       return (
         <YellowDumpTruck
-          actionState={actionState === 'dumping' ? 'dumping' : actionState === 'driving' ? 'driving' : 'idle'}
+          actionState={
+            actionState === 'bed-open' || actionState === 'dumping'
+              ? 'dumping'
+              : actionState === 'driving'
+              ? 'driving'
+              : 'idle'
+          }
           isAnimated={isAnimated}
           className={className}
           showRocks={showRocks}
+          onClick={onClick}
         />
       );
   }

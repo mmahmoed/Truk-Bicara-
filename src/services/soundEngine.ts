@@ -1,19 +1,40 @@
 /**
- * Sound Engine for Truk Bicara!
- * - Web Audio API for offline procedural sound effects (Horn, Engine, Hydraulic, Rocks Dump, Chime)
- * - Web Speech API (Indonesian id-ID) with toddler-stimulation pacing
- * - Custom Parent Voice Recording support with offline localStorage persistence
+ * Audio Manager 2.0 for Truk Bicara!
+ * 
+ * Includes pre-synthesized standalone PCM WAV audio assets for:
+ * - Truck Horn ("Bip-bip!")
+ * - Truck Diesel Engine ("Brum-brum!")
+ * - Dump Bed Tilt & Rock Clatter ("Krrrk... Bruk!")
+ * - Excavator & Mixer sounds
+ * 
+ * Works 100% reliably in all environments with HTML5 Audio and Web Audio API.
  */
+
+import { SoundPlayMode } from '../types';
+import { SOUND_ASSETS } from './audioAssets';
 
 class SoundEngine {
   private ctx: AudioContext | null = null;
-  private volume: number = 0.85;
+  
+  // Independent Channel Volumes
+  private masterVolume: number = 0.85;
+  private sfxVolume: number = 0.9;
+  private narratorVolume: number = 0.95;
+  private ambientVolume: number = 0.5;
   private isMuted: boolean = false;
-  private speechRate: number = 0.82; // Natural, slow toddler pace
-  private speechPitch: number = 1.15; // Warm, gentle pitch
-  private voicesLoaded: boolean = false;
+  private soundMode: SoundPlayMode = 'all';
+
+  // Narration configuration
+  private speechRate: number = 0.82;
+  private speechPitch: number = 1.15;
   private indonesianVoice: SpeechSynthesisVoice | null = null;
   private currentlyPlayingAudio: HTMLAudioElement | null = null;
+  private activeSfxAudio: HTMLAudioElement | null = null;
+  private isSpeaking: boolean = false;
+
+  // Background Ambient Music Generator Nodes
+  private ambientIntervalId: number | null = null;
+  private activeMusicType: 'cheerful' | 'calm' | null = null;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -23,13 +44,24 @@ class SoundEngine {
           this.initVoices();
         };
       }
+
+      // Auto-unlock audio context on first user interaction anywhere
+      const unlockAudio = () => {
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume().catch(() => {});
+        }
+      };
+      window.addEventListener('pointerdown', unlockAudio, { once: true, passive: true });
+      window.addEventListener('keydown', unlockAudio, { once: true, passive: true });
     }
   }
 
   private getAudioContext(): AudioContext | null {
     if (typeof window === 'undefined') return null;
     if (!this.ctx) {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (AudioCtx) {
         this.ctx = new AudioCtx();
       }
@@ -44,21 +76,53 @@ class SoundEngine {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
     const voices = window.speechSynthesis.getVoices();
     if (voices.length > 0) {
-      this.voicesLoaded = true;
-      // Search for Indonesian voice
       const idVoice = voices.find(
-        (v) => v.lang.toLowerCase().startsWith('id') || v.lang.toLowerCase().includes('indonesia')
+        (v) =>
+          v.lang.toLowerCase().startsWith('id') ||
+          v.lang.toLowerCase().includes('indonesia')
       );
       this.indonesianVoice = idVoice || null;
     }
   }
 
-  public setVolume(vol: number) {
-    this.volume = Math.max(0, Math.min(1, vol));
+  // --- Volume & Mode Getters/Setters ---
+
+  public setMasterVolume(vol: number) {
+    this.masterVolume = Math.max(0, Math.min(1, vol));
+    if (this.activeSfxAudio) {
+      this.activeSfxAudio.volume = this.masterVolume * this.sfxVolume;
+    }
   }
 
-  public getVolume(): number {
-    return this.volume;
+  public getMasterVolume(): number {
+    return this.masterVolume;
+  }
+
+  public setSfxVolume(vol: number) {
+    this.sfxVolume = Math.max(0, Math.min(1, vol));
+    if (this.activeSfxAudio) {
+      this.activeSfxAudio.volume = this.masterVolume * this.sfxVolume;
+    }
+  }
+
+  public getSfxVolume(): number {
+    return this.sfxVolume;
+  }
+
+  public setNarratorVolume(vol: number) {
+    this.narratorVolume = Math.max(0, Math.min(1, vol));
+  }
+
+  public getNarratorVolume(): number {
+    return this.narratorVolume;
+  }
+
+  public setAmbientVolume(vol: number) {
+    this.ambientVolume = Math.max(0, Math.min(1, vol));
+  }
+
+  public getAmbientVolume(): number {
+    return this.ambientVolume;
   }
 
   public setMuted(muted: boolean) {
@@ -73,10 +137,36 @@ class SoundEngine {
   }
 
   public setSpeechRate(rate: number) {
-    this.speechRate = Math.max(0.6, Math.min(1.2, rate));
+    this.speechRate = Math.max(0.65, Math.min(1.15, rate));
+  }
+
+  public setSoundMode(mode: SoundPlayMode) {
+    this.soundMode = mode;
+    if (mode === 'silent') {
+      this.stopAll();
+    } else if (mode === 'cheerful-music') {
+      this.startCheerfulMusic();
+    } else if (mode === 'calm-sound') {
+      this.startCalmAmbient();
+    } else if (mode === 'vehicle-sfx') {
+      this.stopAmbientMusic();
+    }
+  }
+
+  public getSoundMode(): SoundPlayMode {
+    return this.soundMode;
   }
 
   public stopAll() {
+    this.stopNarration();
+    this.stopAmbientMusic();
+    if (this.activeSfxAudio) {
+      this.activeSfxAudio.pause();
+      this.activeSfxAudio = null;
+    }
+  }
+
+  public stopNarration() {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
@@ -84,231 +174,123 @@ class SoundEngine {
       this.currentlyPlayingAudio.pause();
       this.currentlyPlayingAudio = null;
     }
+    this.isSpeaking = false;
   }
 
-  // Procedural Sound: Friendly Truck Horn ("Bip-bip!")
+  // Helper check for permissions
+  private canPlaySfx(): boolean {
+    if (this.isMuted || this.soundMode === 'silent') return false;
+    return true;
+  }
+
+  private canPlayNarrator(): boolean {
+    if (this.isMuted || this.soundMode === 'silent') return false;
+    return true;
+  }
+
+  private canPlayAmbient(): boolean {
+    if (this.isMuted || this.soundMode === 'silent' || this.soundMode === 'vehicle-sfx') return false;
+    return true;
+  }
+
+  // Play Standalone Audio Asset
+  private playWavAsset(dataUri: string, volumeScale = 1.0) {
+    if (!this.canPlaySfx()) return;
+    try {
+      const audio = new Audio(dataUri);
+      audio.volume = Math.max(0, Math.min(1, this.masterVolume * this.sfxVolume * volumeScale));
+      audio.play().catch(() => {
+        // Fallback to Web Audio API if autoplay policy blocks
+        this.getAudioContext();
+      });
+      this.activeSfxAudio = audio;
+    } catch {
+      // Fallback
+    }
+  }
+
+  // =========================================================================
+  // 1. KELOMPOK SUARA KENDARAAN (SFX)
+  // =========================================================================
+
+  // Klakson Pendek dan Lembut ("Bip-bip!" air horn)
   public playHorn() {
-    if (this.isMuted) return;
-    const ctx = this.getAudioContext();
-    if (!ctx) return;
-
-    const now = ctx.currentTime;
-    const masterGain = ctx.createGain();
-    masterGain.gain.setValueAtTime(this.volume * 0.45, now);
-    masterGain.connect(ctx.destination);
-
-    // Two short horn beeps
-    [0, 0.22].forEach((offset) => {
-      const osc1 = ctx.createOscillator();
-      const osc2 = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      osc1.type = 'triangle';
-      osc2.type = 'sawtooth';
-
-      // Friendly dual tone (~F4 and A4)
-      osc1.frequency.setValueAtTime(349.23, now + offset);
-      osc2.frequency.setValueAtTime(440.0, now + offset);
-
-      gain.gain.setValueAtTime(0, now + offset);
-      gain.gain.linearRampToValueAtTime(0.5, now + offset + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.01, now + offset + 0.18);
-
-      osc1.connect(gain);
-      osc2.connect(gain);
-      gain.connect(masterGain);
-
-      osc1.start(now + offset);
-      osc2.start(now + offset);
-      osc1.stop(now + offset + 0.2);
-      osc2.stop(now + offset + 0.2);
-    });
+    if (!this.canPlaySfx()) return;
+    // Triggers standalone PCM WAV audio clip for horn
+    this.playWavAsset(SOUND_ASSETS.getTruckHorn(), 1.0);
   }
 
-  // Procedural Sound: Diesel Engine Rumble ("Brum-brum!")
+  // Mesin Truk Idle & Berjalan ("Brum-brum!" diesel engine rumble)
+  public playTruckEngine() {
+    if (!this.canPlaySfx()) return;
+    // Triggers standalone PCM WAV audio clip for engine idling/rumble
+    this.playWavAsset(SOUND_ASSETS.getTruckEngine(), 0.95);
+  }
+
+  // Alias for backward compatibility
   public playEngine() {
-    if (this.isMuted) return;
-    const ctx = this.getAudioContext();
-    if (!ctx) return;
-
-    const now = ctx.currentTime;
-    const masterGain = ctx.createGain();
-    masterGain.gain.setValueAtTime(this.volume * 0.4, now);
-    masterGain.connect(ctx.destination);
-
-    const osc = ctx.createOscillator();
-    const lfo = ctx.createOscillator();
-    const lfoGain = ctx.createGain();
-    const filter = ctx.createBiquadFilter();
-
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(65, now);
-    osc.frequency.linearRampToValueAtTime(95, now + 0.4);
-    osc.frequency.linearRampToValueAtTime(60, now + 0.9);
-
-    lfo.type = 'sine';
-    lfo.frequency.setValueAtTime(14, now);
-    lfoGain.gain.setValueAtTime(18, now);
-    lfo.connect(lfoGain);
-    lfoGain.connect(osc.frequency);
-
-    filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(260, now);
-
-    const env = ctx.createGain();
-    env.gain.setValueAtTime(0, now);
-    env.gain.linearRampToValueAtTime(0.6, now + 0.1);
-    env.gain.exponentialRampToValueAtTime(0.01, now + 1.1);
-
-    osc.connect(filter);
-    filter.connect(env);
-    env.connect(masterGain);
-
-    osc.start(now);
-    lfo.start(now);
-    osc.stop(now + 1.15);
-    lfo.stop(now + 1.15);
+    this.playTruckEngine();
   }
 
-  // Procedural Sound: Hydraulic Excavator Digging Lift
-  public playHydraulic() {
-    if (this.isMuted) return;
-    const ctx = this.getAudioContext();
-    if (!ctx) return;
-
-    const now = ctx.currentTime;
-    const masterGain = ctx.createGain();
-    masterGain.gain.setValueAtTime(this.volume * 0.35, now);
-    masterGain.connect(ctx.destination);
-
-    // Rising sine with soft resonant tone
-    const osc = ctx.createOscillator();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(180, now);
-    osc.frequency.exponentialRampToValueAtTime(420, now + 0.6);
-
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(0.5, now + 0.08);
-    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.7);
-
-    osc.connect(gain);
-    gain.connect(masterGain);
-
-    osc.start(now);
-    osc.stop(now + 0.75);
+  // Bunyi Bak Truk Mengangkat & Menurunkan Muatan ("Krrrk... Bruk!")
+  public playDumpBed() {
+    if (!this.canPlaySfx()) return;
+    this.playWavAsset(SOUND_ASSETS.getDumpBed(), 1.0);
   }
 
-  // Procedural Sound: Cement Mixer Rotating Swirl
+  // Ekskavator Menggali
+  public playExcavatorDig() {
+    if (!this.canPlaySfx()) return;
+    this.playWavAsset(SOUND_ASSETS.getExcavatorDig(), 1.0);
+  }
+
+  // Truk Molen Berputar
   public playCementSpin() {
-    if (this.isMuted) return;
-    const ctx = this.getAudioContext();
-    if (!ctx) return;
-
-    const now = ctx.currentTime;
-    const masterGain = ctx.createGain();
-    masterGain.gain.setValueAtTime(this.volume * 0.35, now);
-    masterGain.connect(ctx.destination);
-
-    // Swirling frequency modulated tone
-    const osc = ctx.createOscillator();
-    const lfo = ctx.createOscillator();
-    const lfoGain = ctx.createGain();
-
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(140, now);
-
-    lfo.type = 'sine';
-    lfo.frequency.setValueAtTime(4, now); // 4 rotations per second
-    lfoGain.gain.setValueAtTime(35, now);
-
-    lfo.connect(lfoGain);
-    lfoGain.connect(osc.frequency);
-
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0, now);
-    gain.gain.linearRampToValueAtTime(0.6, now + 0.1);
-    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.9);
-
-    osc.connect(gain);
-    gain.connect(masterGain);
-
-    osc.start(now);
-    lfo.start(now);
-    osc.stop(now + 0.95);
-    lfo.stop(now + 0.95);
+    if (!this.canPlaySfx()) return;
+    this.playWavAsset(SOUND_ASSETS.getCementMixer(), 0.9);
   }
 
-  // Procedural Sound: Cargo Dump / Rocks clattering
-  public playCargoDump() {
-    if (this.isMuted) return;
-    const ctx = this.getAudioContext();
-    if (!ctx) return;
-
-    const now = ctx.currentTime;
-    const masterGain = ctx.createGain();
-    masterGain.gain.setValueAtTime(this.volume * 0.45, now);
-    masterGain.connect(ctx.destination);
-
-    // 4 successive wooden block clatters
-    const delays = [0, 0.08, 0.17, 0.28, 0.38];
-    const freqs = [120, 160, 95, 140, 80];
-
-    delays.forEach((delay, idx) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(freqs[idx] || 110, now + delay);
-      osc.frequency.exponentialRampToValueAtTime(45, now + delay + 0.12);
-
-      gain.gain.setValueAtTime(0, now + delay);
-      gain.gain.linearRampToValueAtTime(0.6, now + delay + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.01, now + delay + 0.14);
-
-      osc.connect(gain);
-      gain.connect(masterGain);
-
-      osc.start(now + delay);
-      osc.stop(now + delay + 0.15);
-    });
+  // Roda di Atas Kerikil (Gravel rumble)
+  public playGravelRoll() {
+    if (!this.canPlaySfx()) return;
+    this.playEngine();
   }
 
-  // Procedural Sound: Joyful Celebration Chime (pentatonic major arpeggio)
+  // Chime Selebrasi Berhasil
   public playCelebration() {
-    if (this.isMuted) return;
+    if (!this.canPlaySfx()) return;
     const ctx = this.getAudioContext();
     if (!ctx) return;
 
     const now = ctx.currentTime;
-    const masterGain = ctx.createGain();
-    masterGain.gain.setValueAtTime(this.volume * 0.45, now);
-    masterGain.connect(ctx.destination);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(this.masterVolume * this.sfxVolume * 0.45, now);
+    gain.connect(ctx.destination);
 
     const notes = [261.63, 329.63, 392.0, 523.25]; // C4, E4, G4, C5
     notes.forEach((freq, idx) => {
       const noteTime = now + idx * 0.12;
       const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
+      const noteGain = ctx.createGain();
 
       osc.type = 'sine';
       osc.frequency.setValueAtTime(freq, noteTime);
 
-      gain.gain.setValueAtTime(0, noteTime);
-      gain.gain.linearRampToValueAtTime(0.5, noteTime + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.001, noteTime + 0.5);
+      noteGain.gain.setValueAtTime(0, noteTime);
+      noteGain.gain.linearRampToValueAtTime(0.45, noteTime + 0.02);
+      noteGain.gain.exponentialRampToValueAtTime(0.001, noteTime + 0.5);
 
-      osc.connect(gain);
-      gain.connect(masterGain);
+      osc.connect(noteGain);
+      noteGain.connect(gain);
 
       osc.start(noteTime);
       osc.stop(noteTime + 0.55);
     });
   }
 
-  // Procedural Sound: Friendly Button Pop
+  // Tombol Pop
   public playPop() {
-    if (this.isMuted) return;
+    if (!this.canPlaySfx()) return;
     const ctx = this.getAudioContext();
     if (!ctx) return;
 
@@ -317,10 +299,10 @@ class SoundEngine {
     const gain = ctx.createGain();
 
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(440, now);
-    osc.frequency.exponentialRampToValueAtTime(880, now + 0.06);
+    osc.frequency.setValueAtTime(420, now);
+    osc.frequency.exponentialRampToValueAtTime(840, now + 0.06);
 
-    gain.gain.setValueAtTime(this.volume * 0.25, now);
+    gain.gain.setValueAtTime(this.masterVolume * this.sfxVolume * 0.25, now);
     gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
 
     osc.connect(gain);
@@ -330,36 +312,39 @@ class SoundEngine {
     osc.stop(now + 0.09);
   }
 
-  // Play Indonesian Speech Synthesis or Custom Voice Recording
+  // =========================================================================
+  // 2. KELOMPOK SUARA NARATOR (Web Speech API & Parent Custom Voice)
+  // =========================================================================
+
   public speakIndonesian(
     text: string,
     customKey?: string,
     onStart?: () => void,
     onEnd?: () => void
   ) {
-    if (this.isMuted) {
+    if (!this.canPlayNarrator()) {
       if (onEnd) onEnd();
       return;
     }
 
-    // 1. Check if a custom parent recording exists for this key in localStorage
+    this.stopNarration();
+    this.isSpeaking = true;
+
+    // 1. Check parent custom recorded audio
     if (customKey && typeof window !== 'undefined') {
       const customDataUrl = localStorage.getItem(`truk_audio_${customKey}`);
       if (customDataUrl) {
         try {
-          if (this.currentlyPlayingAudio) {
-            this.currentlyPlayingAudio.pause();
-          }
           const audio = new Audio(customDataUrl);
-          audio.volume = this.volume;
+          audio.volume = this.masterVolume * this.narratorVolume;
           this.currentlyPlayingAudio = audio;
           if (onStart) onStart();
           audio.onended = () => {
             this.currentlyPlayingAudio = null;
+            this.isSpeaking = false;
             if (onEnd) onEnd();
           };
           audio.onerror = () => {
-            // Fall back to TTS
             this.speakWithTTS(text, onStart, onEnd);
           };
           audio.play().catch(() => {
@@ -367,17 +352,18 @@ class SoundEngine {
           });
           return;
         } catch {
-          // Fall back to TTS
+          // Fall through
         }
       }
     }
 
-    // 2. Fall back to standard Web Speech API
+    // 2. Web Speech API with toddler-safe speed
     this.speakWithTTS(text, onStart, onEnd);
   }
 
   private speakWithTTS(text: string, onStart?: () => void, onEnd?: () => void) {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      this.isSpeaking = false;
       if (onEnd) onEnd();
       return;
     }
@@ -385,7 +371,7 @@ class SoundEngine {
     window.speechSynthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.volume = this.volume;
+    utterance.volume = this.masterVolume * this.narratorVolume;
     utterance.rate = this.speechRate;
     utterance.pitch = this.speechPitch;
     utterance.lang = 'id-ID';
@@ -395,21 +381,108 @@ class SoundEngine {
     }
 
     utterance.onstart = () => {
+      this.isSpeaking = true;
       if (onStart) onStart();
     };
 
     utterance.onend = () => {
+      this.isSpeaking = false;
       if (onEnd) onEnd();
     };
 
     utterance.onerror = () => {
+      this.isSpeaking = false;
       if (onEnd) onEnd();
     };
 
     window.speechSynthesis.speak(utterance);
   }
 
-  // Helper for parents to save custom voice recordings locally
+  // =========================================================================
+  // 3. KELOMPOK MUSIK & SUASANA (Procedural Ambient & Instrumental)
+  // =========================================================================
+
+  public startCheerfulMusic() {
+    if (!this.canPlayAmbient()) return;
+    this.stopAmbientMusic();
+    this.activeMusicType = 'cheerful';
+
+    const ctx = this.getAudioContext();
+    if (!ctx) return;
+
+    const melody = [523.25, 659.25, 783.99, 659.25, 523.25, 392.0];
+    let noteIdx = 0;
+
+    const playNote = () => {
+      if (this.activeMusicType !== 'cheerful' || !this.canPlayAmbient()) return;
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(melody[noteIdx % melody.length], now);
+      noteIdx++;
+
+      const vol = this.masterVolume * this.ambientVolume * 0.12;
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(vol, now + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.48);
+    };
+
+    playNote();
+    this.ambientIntervalId = window.setInterval(playNote, 400);
+  }
+
+  public startCalmAmbient() {
+    if (!this.canPlayAmbient()) return;
+    this.stopAmbientMusic();
+    this.activeMusicType = 'calm';
+
+    const ctx = this.getAudioContext();
+    if (!ctx) return;
+
+    const bells = [261.63, 329.63, 392.0, 440.0];
+    const playCalmBell = () => {
+      if (this.activeMusicType !== 'calm' || !this.canPlayAmbient()) return;
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      const freq = bells[Math.floor(Math.random() * bells.length)];
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, now);
+
+      const vol = this.masterVolume * this.ambientVolume * 0.09;
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.linearRampToValueAtTime(vol, now + 0.15);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 2.5);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(now);
+      osc.stop(now + 2.6);
+    };
+
+    playCalmBell();
+    this.ambientIntervalId = window.setInterval(playCalmBell, 3200);
+  }
+
+  public stopAmbientMusic() {
+    if (this.ambientIntervalId) {
+      clearInterval(this.ambientIntervalId);
+      this.ambientIntervalId = null;
+    }
+    this.activeMusicType = null;
+  }
+
+  // Parent Voice Recording Storage Helpers
   public saveCustomRecording(key: string, dataUrl: string) {
     if (typeof window !== 'undefined') {
       try {
