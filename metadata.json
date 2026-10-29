@@ -1,0 +1,6 @@
+{
+  "name": "Truk Bicara!",
+  "description": "Aplikasi stimulasi wicara dan bermain fisik interaktif bertema truk konstruksi untuk anak usia 2-3 tahun di layar TV bersama orang tua.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
